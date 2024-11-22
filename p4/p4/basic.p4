@@ -24,7 +24,7 @@
 #include <core.p4>
 #include <v1model.p4>
 
-#define CONTROLLER_PORT 16
+#define CONTROLLER_PORT 255
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<16> TYPE_ARP = 0x806;
@@ -41,6 +41,7 @@ const bit<16> LLDP_IN = 11;
 const bit<16> PACKET_OUT_ON_PORT = 60001;
 const bit<16> FULL_PROCESS = 60002;
 
+const bit<8> PRESERVE_RECIRC = 201;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -100,6 +101,7 @@ struct user_metadata_t {
     bool           from_controller;
     bool           recirculate;
     bool	   recirculated;
+    bit<9>         ingress_port;
 }
 
 struct intrinsic_metadata_t {
@@ -110,6 +112,7 @@ struct intrinsic_metadata_t {
 struct metadata {
     @metadata @name("intrinsic_metadata")
     intrinsic_metadata_t intrinsic_metadata;
+    @field_list(PRESERVE_RECIRC)
     user_metadata_t      user_metadata;
 }
 
@@ -273,6 +276,10 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
+        if (meta.user_metadata.recirculated) {
+            standard_metadata.ingress_port = meta.user_metadata.ingress_port;
+        }
+
         //packet from controller, go through full pipeline
         if (hdr.cpu_header.isValid() && hdr.cpu_header.reason == FULL_PROCESS) {
             hdr.cpu_header.setInvalid();
@@ -387,7 +394,9 @@ control MyEgress(inout headers hdr,
         if (meta.user_metadata.recirculate) {
             meta.user_metadata.recirculate = false;
             meta.user_metadata.recirculated = true;
-            recirculate({standard_metadata.ingress_port,meta.user_metadata});
+            //recirculate({standard_metadata.ingress_port,meta.user_metadata});
+            meta.user_metadata.ingress_port = standard_metadata.ingress_port;
+            recirculate_preserving_field_list(PRESERVE_RECIRC);
         }
         else if (!hdr.cpu_header.isValid() && hdr.ethernet.isValid() && hdr.ethernet.etherType != TYPE_ARP
                 && hdr.ethernet.etherType != TYPE_BDDP && protect_tbl.apply().hit){
